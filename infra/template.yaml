@@ -102,7 +102,7 @@ Resources:
           projection.ingestion_date.format: yyyy-MM-dd
           projection.ingestion_date.interval: '1'
           projection.ingestion_date.interval.unit: DAYS
-          storage.location.template: !Sub 's3://${RawBucketName}/raw/ingestion_date=${ingestion_date}'
+          storage.location.template: !Sub 's3://${RawBucketName}/raw/ingestion_date=${!ingestion_date}'
         
         PartitionKeys:
           - Name: ingestion_date
