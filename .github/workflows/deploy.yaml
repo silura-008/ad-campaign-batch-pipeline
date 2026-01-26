@@ -5,12 +5,12 @@ on:
     branches:
       - 'feature/**'      # run on any feature branch push
     paths:
-      - infra/templates.yaml
+      - infra/template.yaml
   pull_request:
     branches:
       - main              # run on PR to main
     paths:
-      - infra/templates.yaml
+      - infra/template.yaml
 
 permissions:
   id-token: write
@@ -29,10 +29,10 @@ jobs:
       - name: Validate CFN template
         run: |
           aws cloudformation validate-template \
-            --template-body file://infra/templates.yaml
+            --template-body file://infra/template.yaml
 
       - name: Lint template
-        run: cfn-lint infra/templates.yaml
+        run: cfn-lint infra/template.yaml
 
   deploy:
     needs: validate
@@ -52,7 +52,7 @@ jobs:
         run: |
           aws cloudformation deploy \
             --stack-name ad-campaign-infra \
-            --template-file infra/templates.yaml \
+            --template-file infra/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides \
                 RawBucketName=ad-campaign-raw-bkt \
