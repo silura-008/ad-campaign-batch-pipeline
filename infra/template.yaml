@@ -1,0 +1,263 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Batch processing template (Raw → Silver Iceberg)
+
+Parameters:
+  RawBucketName:
+    Type: String
+    Description: Name of the Raw bucket
+
+  ProcessedBucketName:
+    Type: String
+    Description: Name of the Silver (Iceberg) bucket
+
+  ArtifactBucketName:
+    Type: String
+    Description: Bucket for Glue scripts, temp, logs, spark UI
+
+Resources:
+
+# --- STORAGE LAYER ---
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref RawBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ProcessedBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ArtifactBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+# --- GLUE CATALOG ---
+
+  RawGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: raw_ad_db
+
+  ProcessedGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: processed_ad_db
+
+# --- GLUE TABLE ---
+
+  RawTable:
+    Type: AWS::Glue::Table
+    DependsOn: RawGlueDatabase
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: raw_ad_db
+      TableInput:
+        Name: ad_table
+        Description: Raw ad campaign data partitioned by ingestion date
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: csv
+          skip.header.line.count: '1'
+          projection.enabled: 'true'
+          projection.ingestion_date.type: date
+          projection.ingestion_date.range: '2026-01-01,NOW'
+          projection.ingestion_date.format: yyyy-MM-dd
+          projection.ingestion_date.interval: '1'
+          projection.ingestion_date.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${RawBucketName}/raw/ingestion_date=${!ingestion_date}'
+        
+        PartitionKeys:
+          - Name: ingestion_date
+            Type: string
+            Comment: Date when data was ingested into S3
+        
+        StorageDescriptor:
+          Columns:
+            - Name: campaign_id
+              Type: int
+              Comment: Unique campaign identifier
+            - Name: ad_platform
+              Type: string
+              Comment: Advertising platform (Google Ads, LinkedIn, etc.)
+            - Name: event_date
+              Type: date
+              Comment: Date of the advertising event
+            - Name: impressions
+              Type: bigint
+              Comment: Number of ad impressions
+            - Name: clicks
+              Type: bigint
+              Comment: Number of clicks
+            - Name: conversions
+              Type: bigint
+              Comment: Number of conversions
+            - Name: cost
+              Type: decimal(10,2)
+              Comment: Cost in USD (Google Ads, LinkedIn)
+            - Name: spend
+              Type: decimal(10,2)
+              Comment: Cost in USD (Facebook Ads, Tiktok)
+            - Name: revenue
+              Type: decimal(10,2)
+              Comment: Revenue generated in USD
+            - Name: campaign_name
+              Type: string
+              Comment: Campaign name
+            - Name: device
+              Type: string
+              Comment: Device type (Mobile, Desktop, Tablet)
+            - Name: country_code
+              Type: string
+              Comment: Country code
+            - Name: currency
+              Type: string
+              Comment: Currency code
+            - Name: created_at
+              Type: date
+              Comment: Timestamp when record was created
+          
+          Location: !Sub 's3://${RawBucketName}/raw/'
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          Compressed: false
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+            Parameters:
+              field.delim: ','
+              serialization.format: ','
+              quote.delim: '"'
+              escape.delim: '\\'
+
+# --- IAM ROLE FOR GLUE ---
+
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: glue-batch-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+
+      Policies:
+        - PolicyName: GlueScopedAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+
+              # ---- RAW ----
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt RawBucket.Arn
+                  - !Sub "${RawBucket.Arn}/*"
+
+              # ---- PROCESSED ----
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ProcessedBucket.Arn
+                  - !Sub "${ProcessedBucket.Arn}/*"
+
+              # ---- ARTIFACT----
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+
+# --- GLUE JOB ---
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: ad-campaign-job
+      Role: !GetAtt GlueJobRole.Arn
+      GlueVersion: "4.0"
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+
+      Command:
+        Name: glueetl
+        PythonVersion: "3"
+        ScriptLocation: !Sub "s3://${ArtifactBucketName}/scripts/ad-campaign-job.py"
+
+      DefaultArguments:
+        "--job-language": "python"
+        "--enable-glue-datacatalog": "true"
+        "--enable-spark-ui": "true"
+        "--TempDir": !Sub "s3://${ArtifactBucketName}/temp/"
+        "--spark-event-logs-path": !Sub "s3://${ArtifactBucketName}/spark-ui/"
+    
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+
+      MaxRetries: 0
+      Timeout: 10
+
+
+Outputs:
+  RawBucket:
+    Value: !Ref RawBucket
+  ProcessedBucket:
+    Value: !Ref ProcessedBucket
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket
+  GlueJobName:
+    Value: !Ref GlueJob
+  GlueRoleArn:
+    Value: !GetAtt GlueJobRole.Arn

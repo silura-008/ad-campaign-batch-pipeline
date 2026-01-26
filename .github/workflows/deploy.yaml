@@ -1,0 +1,56 @@
+name: CFN CI/CD
+
+on:
+  push:
+    branches:
+      - 'feature/**'      
+    paths:
+      - infra/template.yaml
+  pull_request:
+    branches:
+      - main              
+    paths:
+      - infra/template.yaml
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 
+        uses: actions/checkout@v4
+        
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Linting CFN template
+        run: cfn-lint infra/template.yaml
+
+  deploy:
+    needs: validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CICD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy CloudFormation Stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name ad-campaign-infra \
+            --template-file infra/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+                RawBucketName=ad-campaign-raw-bkt \
+                ProcessedBucketName=my-ad-campaign-processed-bkt \
+                ArtifactBucketName=ad-campaign-artifacts-bkt \
+            --no-fail-on-empty-changeset
