@@ -83,7 +83,7 @@ Resources:
 
 # --- GLUE TABLE ---
 
-   RawTable:
+  RawTable:
     Type: AWS::Glue::Table
     DependsOn: RawGlueDatabase
     Properties:
