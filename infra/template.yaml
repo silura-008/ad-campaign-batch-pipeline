@@ -1,18 +1,26 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Batch processing template (Raw → Silver Iceberg)
+Description: Ad campaign batch processing infrastructure
 
 Parameters:
+  Environment:
+    Type: String
+    Description: Environment name (dev or production)
+    AllowedValues:
+      - dev
+      - production
+    Default: dev
+    
   RawBucketName:
     Type: String
-    Description: Name of the Raw bucket
-
+    Description: Name of the raw bucket
+  
   ProcessedBucketName:
     Type: String
-    Description: Name of the Silver (Iceberg) bucket
+    Description: Name of the silver (iceberg) bucket
 
   ArtifactBucketName:
     Type: String
-    Description: Bucket for Glue scripts, temp, logs, spark UI
+    Description: Bucket for glue scripts, temp, logs, spark UI
 
 Resources:
 
@@ -20,39 +28,41 @@ Resources:
   RawBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref RawBucketName
+      BucketName: !Sub "${Environment}-${RawBucketName}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      VersioningConfiguration:
-        Status: Enabled
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
   ProcessedBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref ProcessedBucketName
+      BucketName: !Sub "${Environment}-${ProcessedBucketName}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-      VersioningConfiguration:
-        Status: Enabled
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref ArtifactBucketName
+      BucketName: "${Environment}-${ArtifactBucketName}"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -64,13 +74,16 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
 
 # --- GLUE CATALOG ---
 
   RawGlueDatabase:
     Type: AWS::Glue::Database
     Properties:
-      CatalogId: !Ref AWS::AccountId
+      CatalogId: !Sub "${Environment}_raw_ad_db"
       DatabaseInput:
         Name: raw_ad_db
 
@@ -79,7 +92,7 @@ Resources:
     Properties:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
-        Name: processed_ad_db
+        Name: "${Environment}_processed_ad_db"
 
 # --- GLUE TABLE ---
 
@@ -88,7 +101,7 @@ Resources:
     DependsOn: RawGlueDatabase
     Properties:
       CatalogId: !Ref AWS::AccountId
-      DatabaseName: raw_ad_db
+      DatabaseName: !Sub "${Environment}_raw_ad_db"
       TableInput:
         Name: ad_table
         Description: Raw ad campaign data partitioned by ingestion date
@@ -102,7 +115,7 @@ Resources:
           projection.ingestion_date.format: yyyy-MM-dd
           projection.ingestion_date.interval: '1'
           projection.ingestion_date.interval.unit: DAYS
-          storage.location.template: !Sub 's3://${RawBucketName}/raw/ingestion_date=${!ingestion_date}'
+          storage.location.template: !Sub 's3://${Environment}-${RawBucketName}/raw/ingestion_date=${!ingestion_date}'
         
         PartitionKeys:
           - Name: ingestion_date
@@ -154,7 +167,7 @@ Resources:
               Type: date
               Comment: Timestamp when record was created
           
-          Location: !Sub 's3://${RawBucketName}/raw/'
+          Location: !Sub 's3://${Environment}-${RawBucketName}/raw/'
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           Compressed: false
@@ -171,7 +184,7 @@ Resources:
   GlueJobRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: glue-batch-role
+      RoleName: "${Environment}-glue-ad-role"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -220,28 +233,32 @@ Resources:
                   - !GetAtt ArtifactBucket.Arn
                   - !Sub "${ArtifactBucket.Arn}/*"
 
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
 # --- GLUE JOB ---
 
   GlueJob:
     Type: AWS::Glue::Job
     Properties:
-      Name: ad-campaign-job
+      Name: !Sub "${Environment}-ad-glue-job"
       Role: !GetAtt GlueJobRole.Arn
-      GlueVersion: "4.0"
+      GlueVersion: "5.0"
       WorkerType: G.1X
       NumberOfWorkers: 2
 
       Command:
         Name: glueetl
         PythonVersion: "3"
-        ScriptLocation: !Sub "s3://${ArtifactBucketName}/scripts/ad-campaign-job.py"
+        ScriptLocation: !Sub "s3://${Environment}-${ArtifactBucketName}/scripts/ad-glue-job.py"
 
       DefaultArguments:
         "--job-language": "python"
         "--enable-glue-datacatalog": "true"
         "--enable-spark-ui": "true"
-        "--TempDir": !Sub "s3://${ArtifactBucketName}/temp/"
-        "--spark-event-logs-path": !Sub "s3://${ArtifactBucketName}/spark-ui/"
+        "--TempDir": !Sub "s3://${Environment}-${ArtifactBucketName}/temp/"
+        "--spark-event-logs-path": !Sub "s3://${Environment}-${ArtifactBucketName}/spark-ui/"
     
       ExecutionProperty:
         MaxConcurrentRuns: 1
@@ -249,14 +266,26 @@ Resources:
       MaxRetries: 0
       Timeout: 10
 
+      Tags:
+        Environment: !Ref Environment
+
 
 Outputs:
+  Environment:
+    Value: !Ref Environment
+
   RawBucket:
     Value: !Ref RawBucket
   ProcessedBucket:
     Value: !Ref ProcessedBucket
   ArtifactBucket:
     Value: !Ref ArtifactBucket
+
+  RawGlueDatabase:
+    Value: !Ref RawGlueDatabase
+  ProcessedGlueDatabase:
+    Value: !Ref ProcessedGlueDatabase
+
   GlueJobName:
     Value: !Ref GlueJob
   GlueRoleArn:
