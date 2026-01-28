@@ -184,7 +184,7 @@ Resources:
   GlueJobRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: "${Environment}-glue-ad-role"
+      RoleName: !Sub "${Environment}-glue-ad-role"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
