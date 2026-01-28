@@ -1,0 +1,98 @@
+name: CFN CI/CD
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+    paths:
+      - 'infra/template.yaml'
+      - 'infra/params/dev.json'
+      - '.github/workflows/deploy-infra.yaml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infra/template.yaml'
+      - 'infra/params/production.json'
+      - '.github/workflows/deploy-infra.yaml'
+  workflow_dispatch:
+    
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cfn-lint
+        run: pip install cfn-lint
+
+      - name: Linting CFN template
+        run: cfn-lint infra/template.yaml
+
+  deploy-dev:
+    needs: validate
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CICD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy to dev
+        run: |
+          aws cloudformation deploy \
+            --stack-name ad-campaign-dev \
+            --template-file infra/template.yaml \
+            --parameter-overrides file://infra/params/dev.json \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: CloudFormation failure details
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name ad-campaign-dev \
+            --query 'StackEvents[?ResourceStatus==`CREATE_FAILED` || ResourceStatus==`UPDATE_FAILED`].[LogicalResourceId,ResourceType,ResourceStatusReason]' \
+            --output table
+
+  deploy-prod:
+    needs: validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CICD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy to production
+        run: |
+          aws cloudformation deploy \
+            --stack-name ad-campaign-prod \
+            --template-file infra/template.yaml \
+            --parameter-overrides file://infra/params/production.json \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+      
+      - name: CloudFormation failure details
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name ad-campaign-prod \
+            --query 'StackEvents[?ResourceStatus==`CREATE_FAILED` || ResourceStatus==`UPDATE_FAILED`].[LogicalResourceId,ResourceType,ResourceStatusReason]' \
+            --output table
+    

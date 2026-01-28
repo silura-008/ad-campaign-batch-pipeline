@@ -1,0 +1,19 @@
+[
+    {
+      "ParameterKey": "Environment",
+      "ParameterValue": "production"
+    },
+    {
+      "ParameterKey": "RawBucketName",
+      "ParameterValue": "ad-raw-bkt"
+    },
+    {
+      "ParameterKey": "ProcessedBucketName",
+      "ParameterValue": "ad-processed-bkt"
+    },
+    {
+      "ParameterKey": "ArtifactBucketName",
+      "ParameterValue": "ad-artifacts-bkt"
+    }
+  ]
+  
