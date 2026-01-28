@@ -15,7 +15,8 @@ on:
       - 'infra/template.yaml'
       - 'infra/params/production.json'
       - '.github/workflows/deploy-infra.yaml'
-
+  workflow_dispatch:
+    
 permissions:
   id-token: write
   contents: read
