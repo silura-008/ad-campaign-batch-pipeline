@@ -92,7 +92,7 @@ Resources:
     Properties:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
-        Name: "${Environment}_processed_ad_db"
+        Name: !Sub "${Environment}_processed_ad_db"
 
 # --- GLUE TABLE ---
 
