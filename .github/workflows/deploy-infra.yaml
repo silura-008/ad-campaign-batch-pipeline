@@ -31,7 +31,7 @@ jobs:
         run: pip install cfn-lint
 
       - name: Linting CFN template
-        run: cfn-lint infra/batch-processing-template.yaml
+        run: cfn-lint infra/template.yaml
 
   deploy-dev:
     needs: validate
