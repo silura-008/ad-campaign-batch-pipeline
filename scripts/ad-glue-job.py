@@ -34,6 +34,9 @@ raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("i
 
 cleaned_df = (
     raw_df
+    .withColumn("event_date", col("event_date").cast("date"))
+    .withColumn("created_at", col("created_at").cast("date"))
+
     .withColumn("ad_cost", coalesce(col("spend"), col("cost")))
     .withColumn("device", lower(col("device")))
     .withColumn("country_code",
@@ -90,6 +93,7 @@ final_df = enriched_df.select(
     "is_reconciled",
     "reconciliation_count",
     "processed_at",
+    "created_at"
 )
 
 final_df.createOrReplaceTempView("final_df")
@@ -116,7 +120,8 @@ CREATE TABLE IF NOT EXISTS iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESS
     conversion_rate DECIMAL(10,4),
     is_reconciled BOOLEAN,
     reconciliation_count INT,
-    processed_at TIMESTAMP
+    processed_at TIMESTAMP,
+    created_at DATE
 )
 USING iceberg 
 PARTITIONED BY (days(event_date))

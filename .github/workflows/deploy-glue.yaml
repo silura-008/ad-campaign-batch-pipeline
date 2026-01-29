@@ -151,7 +151,6 @@ jobs:
           echo "Job completed: $STATUS"
           echo "Execution time: ${EXECUTION_TIME}s"
           echo "DPU-seconds: ${DPU_SECONDS}"
-          echo "Estimated cost: \$${COST}"
           
           if [[ "$STATUS" != "SUCCEEDED" ]]; then
             echo ""
