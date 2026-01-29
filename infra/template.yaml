@@ -274,7 +274,7 @@ Resources:
         ResultConfiguration:
           OutputLocation: !Sub "s3://${Environment}-${ArtifactBucketName}/athena-results/"
         PublishCloudWatchMetricsEnabled: true
-        EnforceWorkGroupConfiguration: true	
+        EnforceWorkGroupConfiguration: true
 
 
 # --- IAM USER FOR AIRFLOW ---
