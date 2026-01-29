@@ -198,7 +198,6 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-
               # ---- RAW ----
               - Effect: Allow
                 Action:
@@ -207,7 +206,6 @@ Resources:
                 Resource:
                   - !GetAtt RawBucket.Arn
                   - !Sub "${RawBucket.Arn}/*"
-
               # ---- PROCESSED ----
               - Effect: Allow
                 Action:
@@ -218,7 +216,6 @@ Resources:
                 Resource:
                   - !GetAtt ProcessedBucket.Arn
                   - !Sub "${ProcessedBucket.Arn}/*"
-
               # ---- ARTIFACT----
               - Effect: Allow
                 Action:
@@ -266,6 +263,84 @@ Resources:
       Tags:
         Environment: !Ref Environment
 
+# --- ATHENA WORKGROUP ---
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "${Environment}-ad-analytics-wg"
+      Description: Athena workgroup for ad analytics
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${Environment}-${ArtifactBucketName}/athena-results/"
+        PublishCloudWatchMetricsEnabled: true
+        EnforceWorkGroupConfiguration: true	
+
+
+# --- IAM USER FOR AIRFLOW ---
+  AirflowUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${Environment}-airflow-ad-user"
+
+  AirflowUserPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${Environment}-airflow-execution-policy"
+      Users:
+        - !Ref AirflowUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ---- S3 ----
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:AbortMultipartUpload
+              - s3:GetBucketLocation
+            Resource: 
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub "${ArtifactBucket.Arn}/athena-results/*"
+          # ---- ATHENA ----
+          - Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - athena:GetQueryResults
+              - athena:StopQueryExecution
+            Resource: !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${Environment}-ad-analytics-wg"
+          # ---- GLUE  ----
+          - Effect: Allow
+            Action:
+              - glue:StartJobRun
+              - glue:GetJobRun
+              - glue:GetJobRuns
+            Resource: !GetAtt GlueJob.Arn
+            # ---- CATALOG ----
+          - Effect: Allow
+            Action:
+              - glue:GetDatabase
+              - glue:GetTable
+              - glue:GetPartitions
+              - glue:CreatePartition
+              - glue:BatchCreatePartition
+              - glue:UpdateTable
+            Resource:
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${Environment}_raw_ad_db"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${Environment}_raw_ad_db/*"
+            - Effect: Allow
+              Action:
+                - logs:GetLogEvents
+                - logs:DescribeLogStreams
+                - logs:DescribeLogGroups
+              Resource: 
+                - "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/*"
+                - "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
 
 Outputs:
   Environment:
