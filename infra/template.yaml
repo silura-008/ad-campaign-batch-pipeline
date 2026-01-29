@@ -341,7 +341,7 @@ Resources:
               - logs:DescribeLogGroups
             Resource: 
               - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/*"
-              - !Sub "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
+              - "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
 
 Outputs:
   Environment:
@@ -367,5 +367,5 @@ Outputs:
   AthenaWorkGroup:
     Value: !Ref AthenaWorkGroup
 
-  AirflowRoleArn:
-    Value: !Ref AirflowUser.Arn
+  AirflowUser:
+    Value: !Ref AirflowUser
