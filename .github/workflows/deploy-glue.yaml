@@ -18,11 +18,11 @@ on:
 env:
   ARTIFACT_BUCKET: ad-artifacts-bkt
   RAW_BUCKET: ad-raw-bkt
-  PROCESSED_BUCKET: ad-processed-data
+  PROCESSED_BUCKET: ad-processed-bkt
   RAW_DB: raw_ad_db
   PROCESSED_DB: processed_ad_db
   RAW_TABLE: ad_table
-  PROCESSED_TABLE: ad_glues
+  PROCESSED_TABLE: iceberg_ad_table
   MAX_WAIT: 600
 
 permissions:
@@ -72,7 +72,7 @@ jobs:
           # ---- get test data ----
 
           INGESTION_DATE=$(date +%Y-%m-%d)
-          curl -o test_data.csv "${TEST_DATA_API}&date=${INGESTION_DATE}"
+          curl -o test_data.json "${TEST_DATA_API}&date=${INGESTION_DATE}"
 
           aws s3 cp test_data.csv "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.csv"
           
@@ -117,7 +117,7 @@ jobs:
             --query 'JobRunId' \
             --output text)
 
-          echo "Glue job started: $RUN_ID"
+          echo "Job started: $RUN_ID at $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
 
           # ---- check the status ----
 
@@ -128,37 +128,59 @@ jobs:
               echo "Timeout waiting for job after ${MAX_WAIT}s"
               exit 1
             fi
-            echo "Current job status: $STATUS, waiting 30s..."
+            echo "Status: $STATUS (${ELAPSED}s elapsed)"
             sleep 30
             ((ELAPSED+=30))
             STATUS=$(aws glue get-job-run --job-name "${ENV}-ad-glue-job" --run-id "$RUN_ID" --query 'JobRun.JobRunState' --output text)
           done
 
-          echo "Glue job finished with status: $STATUS"
-
           # ---- Result ----
-          case "$STATUS" in
-            SUCCEEDED)
-              echo "Job succeeded"
-              ;;
-            FAILED)
-              echo "Job failed"
-              exit 1
-              ;;
-            STOPPED)
-              echo "Job stopped"
-              exit 1
-              ;;
-            TIMEOUT)
-              echo "Job timed out"
-              exit 1
-              ;;
-            *)
-              echo "Unknown job status: $STATUS"
-              exit 1
-              ;;
-          esac
+            
+          JOB_DETAILS=$(aws glue get-job-run \
+            --job-name "${ENV}-ad-glue-job" \
+            --run-id "$RUN_ID" \
+            --output json)
           
+          EXECUTION_TIME=$(echo "$JOB_DETAILS" | jq -r '.JobRun.ExecutionTime // 0')
+          DPU_SECONDS=$(echo "$JOB_DETAILS" | jq -r '.JobRun.DPUSeconds // 0')
+          MAX_CAPACITY=$(echo "$JOB_DETAILS" | jq -r '.JobRun.MaxCapacity // .JobRun.AllocatedCapacity // 0')
+          ERROR_MESSAGE=$(echo "$JOB_DETAILS" | jq -r '.JobRun.ErrorMessage // "None"')
+          LOG_GROUP=$(echo "$JOB_DETAILS" | jq -r '.JobRun.LogGroupName // "N/A"')
+          
+          echo ""
+          echo "Job completed: $STATUS"
+          echo "Execution time: ${EXECUTION_TIME}s"
+          echo "DPU-seconds: ${DPU_SECONDS}"
+          echo "Estimated cost: \$${COST}"
+          
+          if [[ "$STATUS" != "SUCCEEDED" ]]; then
+            echo ""
+            echo "Error: $ERROR_MESSAGE"
+            
+            if [[ "$LOG_GROUP" != "N/A" ]]; then
+              LOG_STREAM_NAME=$(aws logs describe-log-streams \
+                --log-group-name "$LOG_GROUP" \
+                --order-by LastEventTime \
+                --descending \
+                --max-items 1 \
+                --query 'logStreams[0].logStreamName' \
+                --output text 2>/dev/null || echo "")
+              
+            if [[ -n "$LOG_STREAM_NAME" && "$LOG_STREAM_NAME" != "None" ]]; then
+              echo ""
+              echo "Recent logs:"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "$LOG_STREAM_NAME" \
+                --limit 30 \
+                --query 'events[*].message' \
+                --output text 2>/dev/null | tail -20
+              fi
+            fi
+            
+            exit 1
+          fi
+               
   deploy-prod:
     name: Deploy Production
     needs: validate
