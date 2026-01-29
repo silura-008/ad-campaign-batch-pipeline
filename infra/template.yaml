@@ -333,14 +333,15 @@ Resources:
               - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
               - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${Environment}_raw_ad_db"
               - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${Environment}_raw_ad_db/*"
-            - Effect: Allow
-              Action:
-                - logs:GetLogEvents
-                - logs:DescribeLogStreams
-                - logs:DescribeLogGroups
-              Resource: 
-                - "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/*"
-                - "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
+            # ---- CLOUDWATCH ----
+          - Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:DescribeLogStreams
+              - logs:DescribeLogGroups
+            Resource: 
+              - "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/*"
+              - "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
 
 Outputs:
   Environment:
