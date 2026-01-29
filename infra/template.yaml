@@ -107,8 +107,7 @@ Resources:
         Description: Raw ad campaign data partitioned by ingestion date
         TableType: EXTERNAL_TABLE
         Parameters:
-          classification: csv
-          skip.header.line.count: '1'
+          classification: json
           projection.enabled: 'true'
           projection.ingestion_date.type: date
           projection.ingestion_date.range: '2026-01-01,NOW'
@@ -131,7 +130,7 @@ Resources:
               Type: string
               Comment: Advertising platform (Google Ads, LinkedIn, etc.)
             - Name: event_date
-              Type: date
+              Type: string
               Comment: Date of the advertising event
             - Name: impressions
               Type: bigint
@@ -164,20 +163,18 @@ Resources:
               Type: string
               Comment: Currency code
             - Name: created_at
-              Type: date
-              Comment: Timestamp when record was created
+              Type: string
+              Comment: Date when ad-campaign was created
           
           Location: !Sub 's3://${Environment}-${RawBucketName}/raw/'
           InputFormat: org.apache.hadoop.mapred.TextInputFormat
           OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
           Compressed: false
           SerdeInfo:
-            SerializationLibrary: org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
             Parameters:
-              field.delim: ','
-              serialization.format: ','
-              quote.delim: '"'
-              escape.delim: '\\'
+              ignore.malformed.json: 'true'
+              case.insensitive: 'true'
 
 # --- IAM ROLE FOR GLUE ---
 
@@ -201,7 +198,6 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-
               # ---- RAW ----
               - Effect: Allow
                 Action:
@@ -210,7 +206,6 @@ Resources:
                 Resource:
                   - !GetAtt RawBucket.Arn
                   - !Sub "${RawBucket.Arn}/*"
-
               # ---- PROCESSED ----
               - Effect: Allow
                 Action:
@@ -221,7 +216,6 @@ Resources:
                 Resource:
                   - !GetAtt ProcessedBucket.Arn
                   - !Sub "${ProcessedBucket.Arn}/*"
-
               # ---- ARTIFACT----
               - Effect: Allow
                 Action:
@@ -269,6 +263,85 @@ Resources:
       Tags:
         Environment: !Ref Environment
 
+# --- ATHENA WORKGROUP ---
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "${Environment}-ad-analytics-wg"
+      Description: Athena workgroup for ad analytics
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${Environment}-${ArtifactBucketName}/athena-results/"
+        PublishCloudWatchMetricsEnabled: true
+        EnforceWorkGroupConfiguration: true
+
+
+# --- IAM USER FOR AIRFLOW ---
+  AirflowUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${Environment}-airflow-ad-user"
+
+  AirflowUserPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${Environment}-airflow-execution-policy"
+      Users:
+        - !Ref AirflowUser
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # ---- S3 ----
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:AbortMultipartUpload
+              - s3:GetBucketLocation
+            Resource: 
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub "${ArtifactBucket.Arn}/athena-results/*"
+          # ---- ATHENA ----
+          - Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - athena:GetQueryResults
+              - athena:StopQueryExecution
+            Resource: !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${Environment}-ad-analytics-wg"
+          # ---- GLUE  ----
+          - Effect: Allow
+            Action:
+              - glue:StartJobRun
+              - glue:GetJobRun
+              - glue:GetJobRuns
+            Resource: !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${GlueJob}"
+            # ---- CATALOG ----
+          - Effect: Allow
+            Action:
+              - glue:GetDatabase
+              - glue:GetTable
+              - glue:GetPartitions
+              - glue:CreatePartition
+              - glue:BatchCreatePartition
+              - glue:UpdateTable
+            Resource:
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${Environment}_raw_ad_db"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${Environment}_raw_ad_db/*"
+            # ---- CLOUDWATCH ----
+          - Effect: Allow
+            Action:
+              - logs:GetLogEvents
+              - logs:DescribeLogStreams
+              - logs:DescribeLogGroups
+            Resource: 
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws-glue/jobs/*"
+              - "arn:aws:logs:*:*:log-group:/aws-glue/jobs/*"
 
 Outputs:
   Environment:
@@ -290,3 +363,9 @@ Outputs:
     Value: !Ref GlueJob
   GlueRoleArn:
     Value: !GetAtt GlueJobRole.Arn
+
+  AthenaWorkGroup:
+    Value: !Ref AthenaWorkGroup
+
+  AirflowUser:
+    Value: !Ref AirflowUser
