@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     env: 
       ENV: dev
+      TEST_DATA_API: ${{ secrets.TEST_DATA_API}}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,14 +65,13 @@ jobs:
         run: |
           aws s3 cp scripts/ad-glue-job.py s3://${ENV}-${ARTIFACT_BUCKET}/scripts/
       
-      - name: Preparete test data
+      - name: Prepare test data
         run: |
           set -euo pipefail
           
           # ---- get test data ----
 
           INGESTION_DATE=$(date +%Y-%m-%d)
-          TEST_DATA_API=${{ secrets.TEST_DATA_API}}
           curl -o test_data.csv "${TEST_DATA_API}&date=${INGESTION_DATE}"
 
           aws s3 cp test_data.csv "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.csv"
@@ -120,7 +120,7 @@ jobs:
           echo "Glue job started: $RUN_ID"
 
           # ---- check the status ----
-            
+
           STATUS="RUNNING"
           ELAPSED=0
           while [[ "$STATUS" == "RUNNING" || "$STATUS" == "STARTING" || "$STATUS" == "STOPPING" ]]; do
