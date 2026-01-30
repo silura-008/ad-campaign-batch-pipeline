@@ -108,14 +108,6 @@ Resources:
         TableType: EXTERNAL_TABLE
         Parameters:
           classification: json
-          projection.enabled: 'true'
-          projection.ingestion_date.type: date
-          projection.ingestion_date.range: '2026-01-01,NOW'
-          projection.ingestion_date.format: yyyy-MM-dd
-          projection.ingestion_date.interval: '1'
-          projection.ingestion_date.interval.unit: DAYS
-          storage.location.template: !Sub 's3://${Environment}-${RawBucketName}/raw/ingestion_date=${!ingestion_date}'
-        
         PartitionKeys:
           - Name: ingestion_date
             Type: string
