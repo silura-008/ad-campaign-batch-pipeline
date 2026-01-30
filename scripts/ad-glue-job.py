@@ -31,7 +31,6 @@ spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.
 
 raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date") == args['INGESTION_DATE'])
 
-
 cleaned_df = (
     raw_df
     .withColumn("event_date", col("event_date").cast("date"))
