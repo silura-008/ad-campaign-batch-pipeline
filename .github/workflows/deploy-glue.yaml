@@ -14,11 +14,17 @@ on:
       - 'scripts/ad-glue-job.py'
       - '.github/workflows/deploy-glue.yaml'
   workflow_dispatch:
+    inputs:
+      ingestion_date:
+        description: 'Date to process (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        type: string
     
 env:
   ARTIFACT_BUCKET: ad-artifacts-bkt
   RAW_BUCKET: ad-raw-bkt
   PROCESSED_BUCKET: ad-processed-bkt
+  ATHENA_WORKGROUP: ad-analytics-wg
   RAW_DB: raw_ad_db
   PROCESSED_DB: processed_ad_db
   RAW_TABLE: ad_table
@@ -55,6 +61,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set ingestion date
+        run: |
+          # input date if provided, otherwise today's date
+          INPUT_DATE="${{ github.event.inputs.ingestion_date }}"
+          FINAL_DATE=${INPUT_DATE:-$(date +%Y-%m-%d)}
+          
+          echo "INGESTION_DATE=$FINAL_DATE" >> $GITHUB_ENV
+          echo "Selected Date: $FINAL_DATE"
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -67,40 +82,27 @@ jobs:
       
       - name: Prepare test data
         run: |
-          set -euo pipefail
-          
-          # ---- get test data ----
-
-          INGESTION_DATE=$(date +%Y-%m-%d)
           curl -o test_data.json "${TEST_DATA_API}&date=${INGESTION_DATE}"
-
           aws s3 cp test_data.json "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.json"
           
-          # ---- Register partition ----
+          echo "test data prepared"
 
-          CREATE_OUTPUT=$(aws glue create-partition \
-            --database-name "${ENV}_${RAW_DB}" \
-            --table-name "$RAW_TABLE" \
-            --partition-input "{
-              \"Values\": [\"${INGESTION_DATE}\"],
-              \"StorageDescriptor\": {
-                \"Location\": \"s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/\"
-              }
-            }" 2>&1 || true)
+      - name: Register partition
+        run: |
+          QUERY_ID=$(aws athena start-query-execution \
+            --work-group "${ENV}-${ATHENA_WORKGROUP}" \
+            --query-string "ALTER TABLE ${ENV}_${RAW_DB}.${RAW_TABLE} ADD IF NOT EXISTS PARTITION (ingestion_date='${INGESTION_DATE}') LOCATION 's3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/';" \
+            --query-execution-context "Database=${ENV}_${RAW_DB}" \
+            --query 'QueryExecutionId' \
+            --output text)
 
-          if [[ "$CREATE_OUTPUT" == *"AlreadyExistsException"* ]]; then
-            echo "Partition already exists, continuing"
-          elif [[ -n "$CREATE_OUTPUT" ]]; then
-            echo "Partition creation failed: $CREATE_OUTPUT"
-            exit 1
-          fi
-          echo "Test data uploaded and partition registered"
+          aws athena wait query-succeeded --query-execution-id "$QUERY_ID"
+          
+          echo "Partition registered"
 
       - name: Test run glue job on dev environment
         run: |
           set -euo pipefail
-
-          INGESTION_DATE=$(date +%Y-%m-%d)
 
           # ---- Start glue job ----
 
