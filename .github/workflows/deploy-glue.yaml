@@ -74,7 +74,7 @@ jobs:
           INGESTION_DATE=$(date +%Y-%m-%d)
           curl -o test_data.json "${TEST_DATA_API}&date=${INGESTION_DATE}"
 
-          aws s3 cp test_data.json "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.csv"
+          aws s3 cp test_data.json "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.json"
           
           # ---- Register partition ----
 
