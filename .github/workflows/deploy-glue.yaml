@@ -96,9 +96,41 @@ jobs:
             --query 'QueryExecutionId' \
             --output text)
 
-          aws athena wait query-succeeded --query-execution-id "$QUERY_ID"
+          echo "Started Athena query: $QUERY_ID"
+
+          TIMER=0
+          MAX_RETRIES=20 
+          # 20 * 5s = 100 seconds
           
-          echo "Partition registered"
+          while [ $TIMER -lt $MAX_RETRIES ]; do
+            STATUS=$(aws athena get-query-execution \
+              --query-execution-id "$QUERY_ID" \
+              --query 'QueryExecution.Status.State' \
+              --output text)
+      
+            echo "Athena status: $STATUS"
+      
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "Partition registered"
+              exit 0
+            fi
+      
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELLED" ]; then
+              REASON=$(aws athena get-query-execution \
+                --query-execution-id "$QUERY_ID" \
+                --query 'QueryExecution.Status.StateChangeReason' \
+                --output text)
+              echo "Athena failed: $REASON"
+              exit 1
+            fi
+      
+            sleep 5
+            ((TIMER++))
+          done
+      
+          echo "Athena query timed out after 100 seconds"
+          exit 1
+
 
       - name: Test run glue job on dev environment
         run: |
