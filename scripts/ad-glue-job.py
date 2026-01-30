@@ -95,6 +95,8 @@ final_df = enriched_df.select(
     "created_at"
 )
 
+final_df.printSchema()
+
 final_df.createOrReplaceTempView("final_df")
 
 # ---- ICEBERG table creation ----
