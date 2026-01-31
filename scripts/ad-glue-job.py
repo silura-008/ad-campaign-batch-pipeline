@@ -232,4 +232,5 @@ VALUES (
 )
 """)
 
+
 job.commit()
