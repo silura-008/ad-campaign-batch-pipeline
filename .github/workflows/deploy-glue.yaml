@@ -1,0 +1,238 @@
+name: GLUE CI/CD
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+    paths:
+      - 'scripts/ad-glue-job.py'
+      - '.github/workflows/deploy-glue.yaml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/ad-glue-job.py'
+      - '.github/workflows/deploy-glue.yaml'
+  workflow_dispatch:
+    inputs:
+      ingestion_date:
+        description: 'Date to process (YYYY-MM-DD). Leave blank for today.'
+        required: false
+        type: string
+    
+env:
+  ARTIFACT_BUCKET: ad-artifacts-bkt
+  RAW_BUCKET: ad-raw-bkt
+  PROCESSED_BUCKET: ad-processed-bkt
+  ATHENA_WORKGROUP: ad-analytics-wg
+  RAW_DB: raw_ad_db
+  PROCESSED_DB: processed_ad_db
+  RAW_TABLE: ad_table
+  PROCESSED_TABLE: iceberg_ad_table
+  MAX_WAIT: 600
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Check syntax
+        run: python -m py_compile scripts/ad-glue-job.py
+
+  deploy-dev:
+    needs: validate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env: 
+      ENV: dev
+      TEST_DATA_API: ${{ secrets.TEST_DATA_API}}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set ingestion date
+        run: |
+          # input date if provided, otherwise today's date
+          INPUT_DATE="${{ github.event.inputs.ingestion_date }}"
+          FINAL_DATE=${INPUT_DATE:-$(date +%Y-%m-%d)}
+          
+          echo "INGESTION_DATE=$FINAL_DATE" >> $GITHUB_ENV
+          echo "Selected Date: $FINAL_DATE"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CICD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy script
+        run: |
+          aws s3 cp scripts/ad-glue-job.py s3://${ENV}-${ARTIFACT_BUCKET}/scripts/
+      
+      - name: Prepare test data
+        run: |
+          curl -o test_data.json "${TEST_DATA_API}&date=${INGESTION_DATE}"
+          aws s3 cp test_data.json "s3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/test_data.json"
+          
+          echo "test data prepared"
+
+      - name: Register partition
+        run: |
+          QUERY_ID=$(aws athena start-query-execution \
+            --work-group "${ENV}-${ATHENA_WORKGROUP}" \
+            --query-string "ALTER TABLE ${ENV}_${RAW_DB}.${RAW_TABLE} ADD IF NOT EXISTS PARTITION (ingestion_date='${INGESTION_DATE}') LOCATION 's3://${ENV}-${RAW_BUCKET}/raw/ingestion_date=${INGESTION_DATE}/';" \
+            --query-execution-context "Database=${ENV}_${RAW_DB}" \
+            --query 'QueryExecutionId' \
+            --output text)
+
+          echo "Started Athena query: $QUERY_ID"
+
+          TIMER=0
+          MAX_RETRIES=20 
+          # 20 * 5s = 100 seconds
+          
+          while [ $TIMER -lt $MAX_RETRIES ]; do
+            STATUS=$(aws athena get-query-execution \
+              --query-execution-id "$QUERY_ID" \
+              --query 'QueryExecution.Status.State' \
+              --output text)
+      
+            echo "Athena status: $STATUS"
+      
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "Partition registered"
+              exit 0
+            fi
+      
+            if [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "CANCELLED" ]; then
+              REASON=$(aws athena get-query-execution \
+                --query-execution-id "$QUERY_ID" \
+                --query 'QueryExecution.Status.StateChangeReason' \
+                --output text)
+              echo "Athena failed: $REASON"
+              exit 1
+            fi
+
+            echo "Status: $STATUS (${TIMER}s elapsed)"
+            sleep 5
+            ((TIMER++))
+          done
+      
+          echo "Athena query timed out after 100 seconds"
+          exit 1
+
+
+      - name: Test run glue job on dev environment
+        run: |
+          set -euo pipefail
+
+          # ---- Start glue job ----
+
+          RUN_ID=$(aws glue start-job-run \
+            --job-name "${ENV}-ad-glue-job" \
+            --arguments '{
+              "--INGESTION_DATE":"'"$INGESTION_DATE"'",
+              "--RAW_DB":"'"${ENV}_${RAW_DB}"'",
+              "--RAW_TABLE":"'"$RAW_TABLE"'",
+              "--PROCESSED_BUCKET":"'"s3://${ENV}-${PROCESSED_BUCKET}"'",
+              "--PROCESSED_DB":"'"${ENV}_${PROCESSED_DB}"'",
+              "--PROCESSED_TABLE":"'"$PROCESSED_TABLE"'"
+            }' \
+            --query 'JobRunId' \
+            --output text)
+
+          echo "Job started: $RUN_ID at $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+
+          # ---- check the status ----
+
+          STATUS="RUNNING"
+          ELAPSED=0
+          while [[ "$STATUS" == "RUNNING" || "$STATUS" == "STARTING" || "$STATUS" == "STOPPING" ]]; do
+            if [ $ELAPSED -ge $MAX_WAIT ]; then
+              echo "Timeout waiting for job after ${MAX_WAIT}s"
+              exit 1
+            fi
+            echo "Status: $STATUS (${ELAPSED}s elapsed)"
+            sleep 30
+            ((ELAPSED+=30))
+            STATUS=$(aws glue get-job-run --job-name "${ENV}-ad-glue-job" --run-id "$RUN_ID" --query 'JobRun.JobRunState' --output text)
+          done
+
+          # ---- Result ----
+            
+          JOB_DETAILS=$(aws glue get-job-run \
+            --job-name "${ENV}-ad-glue-job" \
+            --run-id "$RUN_ID" \
+            --output json)
+          
+          EXECUTION_TIME=$(echo "$JOB_DETAILS" | jq -r '.JobRun.ExecutionTime // 0')
+          DPU_SECONDS=$(echo "$JOB_DETAILS" | jq -r '.JobRun.DPUSeconds // 0')
+          MAX_CAPACITY=$(echo "$JOB_DETAILS" | jq -r '.JobRun.MaxCapacity // .JobRun.AllocatedCapacity // 0')
+          ERROR_MESSAGE=$(echo "$JOB_DETAILS" | jq -r '.JobRun.ErrorMessage // "None"')
+          LOG_GROUP=$(echo "$JOB_DETAILS" | jq -r '.JobRun.LogGroupName // "N/A"')
+          
+          echo ""
+          echo "Job completed: $STATUS"
+          echo "Execution time: ${EXECUTION_TIME}s"
+          echo "DPU-seconds: ${DPU_SECONDS}"
+          
+          if [[ "$STATUS" != "SUCCEEDED" ]]; then
+            echo ""
+            echo "Error: $ERROR_MESSAGE"
+            
+            if [[ "$LOG_GROUP" != "N/A" ]]; then
+              LOG_STREAM_NAME=$(aws logs describe-log-streams \
+                --log-group-name "$LOG_GROUP" \
+                --order-by LastEventTime \
+                --descending \
+                --max-items 1 \
+                --query 'logStreams[0].logStreamName' \
+                --output text 2>/dev/null || echo "")
+              
+            if [[ -n "$LOG_STREAM_NAME" && "$LOG_STREAM_NAME" != "None" ]]; then
+              echo ""
+              echo "Recent logs:"
+              aws logs get-log-events \
+                --log-group-name "$LOG_GROUP" \
+                --log-stream-name "$LOG_STREAM_NAME" \
+                --limit 30 \
+                --query 'events[*].message' \
+                --output text 2>/dev/null | tail -20
+              fi
+            fi
+            
+            exit 1
+          fi
+               
+  deploy-prod:
+    name: Deploy Production
+    needs: validate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env: 
+      ENV: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CICD_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Deploy script
+        run: |
+          aws s3 cp scripts/ad-glue-job.py s3://${ENV}-${ARTIFACT_BUCKET}/scripts/
+
