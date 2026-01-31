@@ -4,7 +4,7 @@ from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
 
-from pyspark.sql.functions import col, coalesce, lower, trim, when, lit, current_timestamp
+from pyspark.sql.functions import col, coalesce, lower, when, lit, current_timestamp
 
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
@@ -29,14 +29,35 @@ spark.conf.set("spark.sql.catalog.iceberg_catalog.catalog-impl", "org.apache.ice
 spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
 
 
-raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date") == args['INGESTION_DATE'])
+
+raw_dynamic_frame = glueContext.create_dynamic_frame.from_catalog(
+    database=args['RAW_DB'],
+    table_name=args['RAW_TABLE'],
+    transformation_ctx="raw_dynamic_frame",
+    push_down_predicate=f"ingestion_date='{args['INGESTION_DATE']}'"
+)
+
+
+raw_df = raw_dynamic_frame.toDF()
+
+columns = raw_df.columns
+
+if "cost" not in columns:
+    raw_df = raw_df.withColumn("cost", lit(None))
+    
+if "spend" not in columns:
+    raw_df = raw_df.withColumn("spend", lit(None))
+    
+print("raw_df")
+raw_df.printSchema()
+
 
 cleaned_df = (
     raw_df
-    .withColumn("event_date", col("event_date").cast("date"))
-    .withColumn("created_at", col("created_at").cast("date"))
-
     .withColumn("ad_cost", coalesce(col("spend"), col("cost")))
+    .withColumn("ad_cost", col("ad_cost").cast("decimal(10,2)"))
+    .withColumn("revenue", col("revenue").cast("decimal(10,2)"))
+
     .withColumn("device", lower(col("device")))
     .withColumn("country_code",
                 when(col("country_code").isin(["USA", "US"]), "US")
@@ -51,20 +72,25 @@ cleaned_df = (
 enriched_df = (
     cleaned_df
     .withColumn("ctr", 
-                when(col("impressions") > 0, (col("clicks") / col("impressions") * 100))
-                .otherwise(lit(0)))
+                when(col("impressions")> 0, (col("clicks") / col("impressions") * 100))
+                .otherwise(lit(0))
+                .cast("decimal(10,4)"))
     .withColumn("cpc",
                 when(col("clicks") > 0, col("ad_cost") / col("clicks"))
-                .otherwise(lit(None)))
+                .otherwise(lit(None))
+                .cast("decimal(10,2)"))
     .withColumn("cpa",
                 when(col("conversions") > 0, col("ad_cost") / col("conversions"))
-                .otherwise(lit(None)))
+                .otherwise(lit(None))
+                .cast("decimal(10,2)"))
     .withColumn("roas",
                 when(col("ad_cost") > 0, col("revenue") / col("ad_cost"))
-                .otherwise(lit(0)))
+                .otherwise(lit(0))
+                .cast("decimal(10,2)"))
     .withColumn("conversion_rate",
                 when(col("clicks") > 0, (col("conversions") / col("clicks") * 100))
-                .otherwise(lit(0)))
+                .otherwise(lit(0))
+                .cast("decimal(10,4)"))
 
     .withColumn("is_reconciled", lit(False))
     .withColumn("reconciliation_count", lit(0))
@@ -73,28 +99,29 @@ enriched_df = (
 
 
 final_df = enriched_df.select(
-    "campaign_id",
-    "ad_platform",
-    "event_date",
-    "campaign_name",
-    "device",
-    "country_code",
-    "ad_cost",
-    "impressions",
-    "clicks",
-    "conversions",
-    "revenue",
-    "ctr",
-    "cpc",
-    "cpa",
-    "roas",
-    "conversion_rate",
-    "is_reconciled",
-    "reconciliation_count",
-    "processed_at",
-    "created_at"
+    col("campaign_id"),
+    col("ad_platform"),
+    col("event_date").cast("date"),
+    col("campaign_name"),
+    col("device"),
+    col("country_code"),
+    col("ad_cost"),
+    col("impressions"),
+    col("clicks"),
+    col("conversions"),
+    col("revenue"),
+    col("ctr").cast("decimal(10,4)"),
+    col("cpc").cast("decimal(10,2)"),
+    col("cpa").cast("decimal(10,2)"),
+    col("roas").cast("decimal(10,2)"),
+    col("conversion_rate").cast("decimal(10,4)"),
+    col("is_reconciled"),
+    col("reconciliation_count"),
+    col("processed_at"),
+    col("created_at").cast("date")
 )
 
+print("final_df")
 final_df.printSchema()
 
 final_df.createOrReplaceTempView("final_df")
@@ -159,7 +186,50 @@ WHEN MATCHED THEN UPDATE SET
     reconciliation_count = t.reconciliation_count + 1,
     processed_at = s.processed_at
           
-WHEN NOT MATCHED THEN INSERT *
+WHEN NOT MATCHED THEN INSERT (
+    campaign_id,
+    ad_platform,
+    event_date,
+    campaign_name,
+    device,
+    country_code,
+    ad_cost,
+    impressions,
+    clicks,
+    conversions,
+    revenue,
+    ctr,
+    cpc,
+    cpa,
+    roas,
+    conversion_rate,
+    is_reconciled,
+    reconciliation_count,
+    processed_at,
+    created_at
+)
+VALUES (
+    s.campaign_id,
+    s.ad_platform,
+    s.event_date,
+    s.campaign_name,
+    s.device,
+    s.country_code,
+    s.ad_cost,
+    s.impressions,
+    s.clicks,
+    s.conversions,
+    s.revenue,
+    s.ctr,
+    s.cpc,
+    s.cpa,
+    s.roas,
+    s.conversion_rate,
+    s.is_reconciled,
+    s.reconciliation_count,
+    s.processed_at,
+    s.created_at
+)
 """)
 
 job.commit()
