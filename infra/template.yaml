@@ -130,7 +130,7 @@ Resources:
           classification: json
         PartitionKeys:
           - Name: ingestion_date
-            Type: string
+            Type: date
             Comment: Date when data was ingested into S3
         
         StorageDescriptor:
@@ -142,7 +142,7 @@ Resources:
               Type: string
               Comment: Advertising platform (Google Ads, LinkedIn, etc.)
             - Name: event_date
-              Type: string
+              Type: date
               Comment: Date of the advertising event
             - Name: impressions
               Type: bigint
@@ -154,13 +154,13 @@ Resources:
               Type: bigint
               Comment: Number of conversions
             - Name: cost
-              Type: decimal(10,2)
+              Type: double
               Comment: Cost in USD (Google Ads, LinkedIn)
             - Name: spend
-              Type: decimal(10,2)
+              Type: double
               Comment: Cost in USD (Facebook Ads, Tiktok)
             - Name: revenue
-              Type: decimal(10,2)
+              Type: double
               Comment: Revenue generated in USD
             - Name: campaign_name
               Type: string
@@ -175,7 +175,7 @@ Resources:
               Type: string
               Comment: Currency code
             - Name: created_at
-              Type: string
+              Type: date
               Comment: Date when ad-campaign was created
           
           Location: !Sub 's3://${Environment}-${RawBucketName}/raw/'
