@@ -28,25 +28,7 @@ spark.conf.set("spark.sql.catalog.iceberg_catalog.warehouse", args['PROCESSED_BU
 spark.conf.set("spark.sql.catalog.iceberg_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
 
-
-
-raw_dynamic_frame = glueContext.create_dynamic_frame.from_catalog(
-    database=args['RAW_DB'],
-    table_name=args['RAW_TABLE'],
-    transformation_ctx="raw_dynamic_frame",
-    push_down_predicate=f"ingestion_date='{args['INGESTION_DATE']}'"
-)
-
-
-raw_df = raw_dynamic_frame.toDF()
-
-columns = raw_df.columns
-
-if "cost" not in columns:
-    raw_df = raw_df.withColumn("cost", lit(None))
-    
-if "spend" not in columns:
-    raw_df = raw_df.withColumn("spend", lit(None))
+raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")==args['INGESTION_DATE'])
     
 print("raw_df")
 raw_df.printSchema()
@@ -101,7 +83,7 @@ enriched_df = (
 final_df = enriched_df.select(
     col("campaign_id"),
     col("ad_platform"),
-    col("event_date").cast("date"),
+    col("event_date"),
     col("campaign_name"),
     col("device"),
     col("country_code"),
@@ -118,7 +100,7 @@ final_df = enriched_df.select(
     col("is_reconciled"),
     col("reconciliation_count"),
     col("processed_at"),
-    col("created_at").cast("date")
+    col("created_at")
 )
 
 print("final_df")
