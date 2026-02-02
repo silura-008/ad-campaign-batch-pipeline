@@ -40,9 +40,9 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
-          - Id: AbortIncompleteMultipartUploads
+          - Id: clean_incomplete_multipart_uploads
             Status: Enabled
-            AbortIncompleteMultipartUploads:
+            AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
       Tags:
         - Key: Environment
@@ -63,7 +63,7 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
-          - Id: Clean_Incomplete_Multipart_Uploads
+          - Id: clean_incomplete_multipart_uploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 1
@@ -88,7 +88,7 @@ Resources:
         RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
-          - Id: Expire_Old_Athena_Results
+          - Id: clean_old_athena_results
             Status: Enabled
             Filter:
               Prefix: 'athena-results/' 
