@@ -38,6 +38,12 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUploads:
+              DaysAfterInitiation: 1
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -55,6 +61,12 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: Clean_Incomplete_Multipart_Uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -74,6 +86,15 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: Expire_Old_Athena_Results
+            Status: Enabled
+            Filter:
+              Prefix: 'athena-results/' 
+            ExpirationInDays: 3
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -308,9 +329,12 @@ Resources:
           # ---- GLUE  ----
           - Effect: Allow
             Action:
-              - glue:StartJobRun
+              - glue:GetJob
               - glue:GetJobRun
               - glue:GetJobRuns
+              - glue:StartJobRun
+              - glue:GetJobRuns
+              - glue:BatchStopJobRun
             Resource: !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${GlueJob}"
             # ---- CATALOG ----
           - Effect: Allow
