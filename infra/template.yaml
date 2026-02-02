@@ -90,8 +90,7 @@ Resources:
         Rules:
           - Id: clean_old_athena_results
             Status: Enabled
-            Filter:
-              Prefix: 'athena-results/' 
+            Prefix: 'athena-results/' 
             ExpirationInDays: 3
             NoncurrentVersionExpiration:
               NoncurrentDays: 1
