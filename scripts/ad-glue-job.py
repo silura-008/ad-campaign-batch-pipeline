@@ -49,7 +49,7 @@ cleaned_df = (
     .withColumn("campaign_name",
                 when(col("campaign_name").isNull(), lit("Unknown"))
                 .otherwise(col("campaign_name")))
-    withColumn("event_date", to_date(col("event_date"), "yyyy-MM-dd"))
+    .withColumn("event_date", to_date(col("event_date"), "yyyy-MM-dd"))
     .withColumn("created_at", to_date(col("created_at"), "yyyy-MM-dd"))
 )
 
