@@ -106,7 +106,16 @@ final_df = enriched_df.select(
 print("final_df")
 final_df.printSchema()
 
-final_df.createOrReplaceTempView("final_df")
+today_df = final_df.filter(
+    col("event_date") == (args["INGESTION_DATE"])
+)
+
+reconcile_df = final_df.filter(
+    col("event_date") < (args["INGESTION_DATE"])
+)
+
+reconcile_df.createOrReplaceTempView("reconcile_df")
+
 
 # ---- ICEBERG table creation ----
 
@@ -143,17 +152,32 @@ TBLPROPERTIES (
 )
 """)
 
-# ---- ICEBERG table insert/update ----
+
+# ---- ICBERG table add new data ----
+today_df.writeTo(
+    f"iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESSED_TABLE']}"
+).overwritePartitions()
+
+# ---- ICEBERG table update old data ----
 
 spark.sql(f"""
 MERGE INTO iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESSED_TABLE']} t
-USING final_df s
+USING reconcile_df s
 ON t.campaign_id = s.campaign_id
    AND t.ad_platform = s.ad_platform
    AND t.event_date = s.event_date
    AND t.event_date >= DATE('{args['INGESTION_DATE']}') - INTERVAL '3' DAY
+   AND t.event_date < DATE('{args['INGESTION_DATE']}')
 
-WHEN MATCHED THEN UPDATE SET 
+WHEN MATCHED 
+AND (
+       NOT(t.ad_cost <=> s.ad_cost)
+    OR NOT(t.impressions <=> s.impressions)
+    OR NOT(t.clicks <=> s.clicks)
+    OR NOT(t.conversions <=> s.conversions)
+    OR NOT(t.revenue <=> s.revenue)
+)
+THEN UPDATE SET 
     ad_cost = s.ad_cost,
     impressions = s.impressions,
     clicks = s.clicks,
