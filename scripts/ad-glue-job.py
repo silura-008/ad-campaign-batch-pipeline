@@ -4,7 +4,7 @@ from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
 
-from pyspark.sql.functions import col, coalesce, lower, when, lit, current_timestamp
+from pyspark.sql.functions import col, coalesce, lower, when, lit, current_timestamp, to_date
 
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
@@ -28,8 +28,8 @@ spark.conf.set("spark.sql.catalog.iceberg_catalog.warehouse", args['PROCESSED_BU
 spark.conf.set("spark.sql.catalog.iceberg_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
 
-raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")==args['INGESTION_DATE'])
-    
+raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")==to_date(lit(args['INGESTION_DATE']), "yyyy-MM-dd"))
+
 print("raw_df")
 raw_df.printSchema()
 
@@ -49,6 +49,8 @@ cleaned_df = (
     .withColumn("campaign_name",
                 when(col("campaign_name").isNull(), lit("Unknown"))
                 .otherwise(col("campaign_name")))
+    withColumn("event_date", to_date(col("event_date"), "yyyy-MM-dd"))
+    .withColumn("created_at", to_date(col("created_at"), "yyyy-MM-dd"))
 )
 
 enriched_df = (
@@ -106,13 +108,11 @@ final_df = enriched_df.select(
 print("final_df")
 final_df.printSchema()
 
-today_df = final_df.filter(
-    col("event_date") == (args["INGESTION_DATE"])
-)
+INGESTION_DATE = to_date(lit(args["INGESTION_DATE"]), "yyyy-MM-dd")
 
-reconcile_df = final_df.filter(
-    col("event_date") < (args["INGESTION_DATE"])
-)
+today_df = final_df.filter(col("event_date") == INGESTION_DATE)
+
+reconcile_df = final_df.filter(col("event_date") < INGESTION_DATE)
 
 reconcile_df.createOrReplaceTempView("reconcile_df")
 
