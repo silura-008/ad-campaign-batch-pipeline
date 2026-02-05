@@ -142,7 +142,7 @@ Resources:
               Type: string
               Comment: Advertising platform (Google Ads, LinkedIn, etc.)
             - Name: event_date
-              Type: date
+              Type: string
               Comment: Date of the advertising event
             - Name: impressions
               Type: bigint
@@ -175,7 +175,7 @@ Resources:
               Type: string
               Comment: Currency code
             - Name: created_at
-              Type: date
+              Type: string
               Comment: Date when ad-campaign was created
           
           Location: !Sub 's3://${Environment}-${RawBucketName}/raw/'
