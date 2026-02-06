@@ -63,10 +63,15 @@ jobs:
 
       - name: Set ingestion date
         run: |
-          # input date if provided, otherwise today's date
+          # input date if provided, otherwise today + 7 days in the future
           INPUT_DATE="${{ github.event.inputs.ingestion_date }}"
-          FINAL_DATE=${INPUT_DATE:-$(date +%Y-%m-%d)}
-          
+
+          if [ -z "$INPUT_DATE" ]; then
+            FINAL_DATE=$(date -d "+7 days" +%Y-%m-%d)
+          else
+            FINAL_DATE="$INPUT_DATE"
+          fi
+        
           echo "INGESTION_DATE=$FINAL_DATE" >> $GITHUB_ENV
           echo "Selected Date: $FINAL_DATE"
 

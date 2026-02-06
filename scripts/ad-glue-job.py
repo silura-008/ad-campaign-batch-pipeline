@@ -4,7 +4,7 @@ from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
 
-from pyspark.sql.functions import col, coalesce, lower, when, lit, current_timestamp
+from pyspark.sql.functions import col, coalesce, lower, when, lit, current_timestamp, to_date
 
 args = getResolvedOptions(sys.argv, [
     'JOB_NAME',
@@ -22,40 +22,25 @@ spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
 
 spark.conf.set("spark.sql.catalog.iceberg_catalog", "org.apache.iceberg.spark.SparkCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.warehouse", args['PROCESSED_BUCKET'])
 spark.conf.set("spark.sql.catalog.iceberg_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
 
+INGESTION_DATE = to_date(lit(args['INGESTION_DATE']), "yyyy-MM-dd")
 
+raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")== INGESTION_DATE)
 
-raw_dynamic_frame = glueContext.create_dynamic_frame.from_catalog(
-    database=args['RAW_DB'],
-    table_name=args['RAW_TABLE'],
-    transformation_ctx="raw_dynamic_frame",
-    push_down_predicate=f"ingestion_date='{args['INGESTION_DATE']}'"
-)
-
-
-raw_df = raw_dynamic_frame.toDF()
-
-columns = raw_df.columns
-
-if "cost" not in columns:
-    raw_df = raw_df.withColumn("cost", lit(None))
-    
-if "spend" not in columns:
-    raw_df = raw_df.withColumn("spend", lit(None))
-    
-print("raw_df")
-raw_df.printSchema()
-
+# print("raw_df")
+# raw_df.printSchema()
 
 cleaned_df = (
     raw_df
-    .withColumn("ad_cost", coalesce(col("spend"), col("cost")))
-    .withColumn("ad_cost", col("ad_cost").cast("decimal(10,2)"))
+    .withColumn("ad_cost", coalesce(col("spend"), col("cost")).cast("decimal(10,2)"))
     .withColumn("revenue", col("revenue").cast("decimal(10,2)"))
 
     .withColumn("device", lower(col("device")))
@@ -67,6 +52,9 @@ cleaned_df = (
     .withColumn("campaign_name",
                 when(col("campaign_name").isNull(), lit("Unknown"))
                 .otherwise(col("campaign_name")))
+                
+    .withColumn("event_date", to_date(col("event_date"), "yyyy-MM-dd"))
+    .withColumn("created_at", to_date(col("created_at"), "yyyy-MM-dd"))
 )
 
 enriched_df = (
@@ -97,11 +85,10 @@ enriched_df = (
     .withColumn("processed_at", current_timestamp())
 )
 
-
 final_df = enriched_df.select(
     col("campaign_id"),
     col("ad_platform"),
-    col("event_date").cast("date"),
+    col("event_date"),
     col("campaign_name"),
     col("device"),
     col("country_code"),
@@ -110,21 +97,25 @@ final_df = enriched_df.select(
     col("clicks"),
     col("conversions"),
     col("revenue"),
-    col("ctr").cast("decimal(10,4)"),
-    col("cpc").cast("decimal(10,2)"),
-    col("cpa").cast("decimal(10,2)"),
-    col("roas").cast("decimal(10,2)"),
-    col("conversion_rate").cast("decimal(10,4)"),
+    col("ctr"),
+    col("cpc"),
+    col("cpa"),
+    col("roas"),
+    col("conversion_rate"),
     col("is_reconciled"),
     col("reconciliation_count"),
     col("processed_at"),
-    col("created_at").cast("date")
-)
+    col("created_at")
+).cache()
 
-print("final_df")
-final_df.printSchema()
+# print("final_df")
+# final_df.printSchema()
 
-final_df.createOrReplaceTempView("final_df")
+today_df = final_df.filter(col("event_date") == INGESTION_DATE)
+
+reconcile_df = final_df.filter(col("event_date") < INGESTION_DATE)
+
+reconcile_df.createOrReplaceTempView("reconcile_df")
 
 # ---- ICEBERG table creation ----
 
@@ -161,17 +152,32 @@ TBLPROPERTIES (
 )
 """)
 
-# ---- ICEBERG table insert/update ----
+# ---- ICBERG table add new data ----
+
+today_df.writeTo(
+    f"iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESSED_TABLE']}"
+).overwritePartitions()
+
+# ---- ICEBERG table update old data ----
 
 spark.sql(f"""
 MERGE INTO iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESSED_TABLE']} t
-USING final_df s
+USING reconcile_df s
 ON t.campaign_id = s.campaign_id
    AND t.ad_platform = s.ad_platform
    AND t.event_date = s.event_date
    AND t.event_date >= DATE('{args['INGESTION_DATE']}') - INTERVAL '3' DAY
+   AND t.event_date < DATE('{args['INGESTION_DATE']}')
 
-WHEN MATCHED THEN UPDATE SET 
+WHEN MATCHED 
+AND (
+       NOT(t.ad_cost <=> s.ad_cost)
+    OR NOT(t.impressions <=> s.impressions)
+    OR NOT(t.clicks <=> s.clicks)
+    OR NOT(t.conversions <=> s.conversions)
+    OR NOT(t.revenue <=> s.revenue)
+)
+THEN UPDATE SET 
     ad_cost = s.ad_cost,
     impressions = s.impressions,
     clicks = s.clicks,
@@ -232,5 +238,6 @@ VALUES (
 )
 """)
 
+final_df.unpersist()
 
 job.commit()
