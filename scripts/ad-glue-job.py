@@ -22,22 +22,25 @@ spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
 
 spark.conf.set("spark.sql.catalog.iceberg_catalog", "org.apache.iceberg.spark.SparkCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.warehouse", args['PROCESSED_BUCKET'])
 spark.conf.set("spark.sql.catalog.iceberg_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
 spark.conf.set("spark.sql.catalog.iceberg_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
 
-raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")==to_date(lit(args['INGESTION_DATE']), "yyyy-MM-dd"))
+INGESTION_DATE = to_date(lit(args['INGESTION_DATE']), "yyyy-MM-dd")
 
-print("raw_df")
-raw_df.printSchema()
+raw_df = spark.read.table(f"{args['RAW_DB']}.{args['RAW_TABLE']}").filter(col("ingestion_date")== INGESTION_DATE)
 
+# print("raw_df")
+# raw_df.printSchema()
 
 cleaned_df = (
     raw_df
-    .withColumn("ad_cost", coalesce(col("spend"), col("cost")))
-    .withColumn("ad_cost", col("ad_cost").cast("decimal(10,2)"))
+    .withColumn("ad_cost", coalesce(col("spend"), col("cost")).cast("decimal(10,2)"))
     .withColumn("revenue", col("revenue").cast("decimal(10,2)"))
 
     .withColumn("device", lower(col("device")))
@@ -49,6 +52,7 @@ cleaned_df = (
     .withColumn("campaign_name",
                 when(col("campaign_name").isNull(), lit("Unknown"))
                 .otherwise(col("campaign_name")))
+                
     .withColumn("event_date", to_date(col("event_date"), "yyyy-MM-dd"))
     .withColumn("created_at", to_date(col("created_at"), "yyyy-MM-dd"))
 )
@@ -81,7 +85,6 @@ enriched_df = (
     .withColumn("processed_at", current_timestamp())
 )
 
-
 final_df = enriched_df.select(
     col("campaign_id"),
     col("ad_platform"),
@@ -94,28 +97,25 @@ final_df = enriched_df.select(
     col("clicks"),
     col("conversions"),
     col("revenue"),
-    col("ctr").cast("decimal(10,4)"),
-    col("cpc").cast("decimal(10,2)"),
-    col("cpa").cast("decimal(10,2)"),
-    col("roas").cast("decimal(10,2)"),
-    col("conversion_rate").cast("decimal(10,4)"),
+    col("ctr"),
+    col("cpc"),
+    col("cpa"),
+    col("roas"),
+    col("conversion_rate"),
     col("is_reconciled"),
     col("reconciliation_count"),
     col("processed_at"),
     col("created_at")
-)
+).cache()
 
-print("final_df")
-final_df.printSchema()
-
-INGESTION_DATE = to_date(lit(args["INGESTION_DATE"]), "yyyy-MM-dd")
+# print("final_df")
+# final_df.printSchema()
 
 today_df = final_df.filter(col("event_date") == INGESTION_DATE)
 
 reconcile_df = final_df.filter(col("event_date") < INGESTION_DATE)
 
 reconcile_df.createOrReplaceTempView("reconcile_df")
-
 
 # ---- ICEBERG table creation ----
 
@@ -152,8 +152,8 @@ TBLPROPERTIES (
 )
 """)
 
-
 # ---- ICBERG table add new data ----
+
 today_df.writeTo(
     f"iceberg_catalog.{args['PROCESSED_DB']}.{args['PROCESSED_TABLE']}"
 ).overwritePartitions()
@@ -238,5 +238,6 @@ VALUES (
 )
 """)
 
+final_df.unpersist()
 
 job.commit()
