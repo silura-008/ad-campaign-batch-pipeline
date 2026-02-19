@@ -31,7 +31,7 @@ jobs:
   
     container:
       image: apache/airflow:2.10.3-python3.11
-      options: --user airflow
+      options: --user root
   
     steps:
       - name: Checkout
@@ -39,7 +39,7 @@ jobs:
   
       - name: Install providers and pytest
         run: |
-          pip install \
+          gosu airflow pip install \
             apache-airflow-providers-amazon==8.29.0 \
             pytest \
             --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
