@@ -40,7 +40,7 @@ jobs:
       - name: Install providers and pytest
         run: |
           su -s /bin/bash airflow -c "pip install \
-            apache-airflow-providers-amazon==8.29.0 \
+            apache-airflow-providers-amazon \
             pytest \
             --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
       
