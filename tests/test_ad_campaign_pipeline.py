@@ -1,7 +1,6 @@
 import os
 import pytest
-from airflow.models import DagBag
-
+from airflow.models.dagbag import DagBag
 
 @pytest.fixture(scope="module")
 def dag_bag():
