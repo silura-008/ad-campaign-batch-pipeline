@@ -27,30 +27,28 @@ permissions:
 
 jobs:
   validate:
+    name: Validate dags
     runs-on: ubuntu-latest
-
+  
+    container:
+      image: apache/airflow:2.10.3-python3.11
+  
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Install airflow dependencies
+  
+      - name: Install providers and pytest
         run: |
-          pip install "apache-airflow==2.10.3" \
+          pip install \
+            apache-airflow-providers-amazon==8.29.0 \
+            pytest \
             --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
-          pip install apache-airflow-providers-amazon pytest
-
+  
       - name: Run pytest
         run: pytest tests/
-
+        
   deploy-dev:
+    name: Deploy to dev
     needs: validate
     if: startsWith(github.ref, 'refs/heads/feature/')
     runs-on: ubuntu-latest
@@ -59,7 +57,7 @@ jobs:
       ENV: dev
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials
@@ -73,6 +71,7 @@ jobs:
           aws s3 sync dags/ s3://${ENV}-${ARTIFACT_BUCKET}/dags/ --delete
 
   deploy-prod:
+    name: Deploy to production
     needs: validate
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
