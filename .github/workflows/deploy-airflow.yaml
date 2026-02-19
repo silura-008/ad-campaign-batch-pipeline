@@ -26,48 +26,22 @@ permissions:
   contents: read
 
 jobs:
-  jobs:
-    validate:
-      runs-on: ubuntu-latest
-  
-      steps:
-        - name: Checkout
-          uses: actions/checkout@v4
-  
-        - name: Run airflow validation container
-          uses: addnab/docker-run-action@v4
-          with:
-            image: apache/airflow:slim-2.10.3-python3.11
-            options: "--user airflow"
-            run: |
-              pip install apache-airflow-providers-amazon==8.29.0 pytest \
-                --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
-              pytest /__w/${{ github.repository }}/tests/
-              
-    name: Validate dags
+  validate:
     runs-on: ubuntu-latest
-  
-    container:
-      image: apache/airflow:slim-2.10.3-python3.11
-  
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-  
-      - name: Fix workspace permissions
-        run: |
-          chown -R airflow:root /__w
-        shell: bash
-  
-      - name: Install providers and pytest
-        run: |
-          pip install \
-            apache-airflow-providers-amazon==8.29.0 \
-            pytest \
-            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
-  
-      - name: Run pytest
-        run: pytest tests/
+
+      - name: Run airflow validation container
+        uses: addnab/docker-run-action@v4
+        with:
+          image: apache/airflow:slim-2.10.3-python3.11
+          options: "--user airflow"
+          run: |
+            pip install apache-airflow-providers-amazon==8.29.0 pytest \
+              --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
+            pytest /__w/${{ github.repository }}/tests/
 
   deploy-dev:
     name: Deploy to dev
