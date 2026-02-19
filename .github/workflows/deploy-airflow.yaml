@@ -26,7 +26,24 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  jobs:
+    validate:
+      runs-on: ubuntu-latest
+  
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+  
+        - name: Run airflow validation container
+          uses: addnab/docker-run-action@v4
+          with:
+            image: apache/airflow:slim-2.10.3-python3.11
+            options: "--user airflow"
+            run: |
+              pip install apache-airflow-providers-amazon==8.29.0 pytest \
+                --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
+              pytest /__w/${{ github.repository }}/tests/
+              
     name: Validate dags
     runs-on: ubuntu-latest
   
@@ -51,7 +68,7 @@ jobs:
   
       - name: Run pytest
         run: pytest tests/
-        
+
   deploy-dev:
     name: Deploy to dev
     needs: validate
