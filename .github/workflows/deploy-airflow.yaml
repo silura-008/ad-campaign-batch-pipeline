@@ -39,12 +39,12 @@ jobs:
   
       - name: Install providers and pytest
         run: |
-          gosu airflow pip install \
+          su -s /bin/bash airflow -c "pip install \
             apache-airflow-providers-amazon==8.29.0 \
             pytest \
-            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt
-  
-      - name: Run pytest
+            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.11.txt"
+      
+            - name: Run pytest
         run: pytest tests/
         
   deploy-dev:
