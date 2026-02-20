@@ -7,8 +7,9 @@ from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
 from datetime import datetime,timedelta
 import requests
+import os
 
-ENV = Variable.get("environment", default_var="dev")
+ENV = os.getenv("ENV", "dev")
 
 RAW_BUCKET = f"{ENV}-ad-raw-bkt"
 RAW_DB = f"{ENV}_raw_ad_db"
@@ -23,7 +24,7 @@ da = {
     'depends_on_past': False,
     'email_on_failure': True,
     'email_on_retry': False,
-    'email': [Variable.get("alert_email")],
+    'email': [Variable.get("alert_email", default_var=None)],
     'retries': 2,
     'sla': timedelta(minutes=15),
     'retry_delay': timedelta(minutes=5),
